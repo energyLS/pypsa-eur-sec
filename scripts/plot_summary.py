@@ -279,6 +279,7 @@ def plot_balances():
 
         df.loc[new_index,new_columns].T.plot(kind="bar",ax=ax,stacked=True,color=[snakemake.config['plotting']['tech_colors'][i] for i in new_index])
 
+        df.loc[new_index,new_columns].to_csv(snakemake.output.balances[:-10] + k + ".csv")
 
         handles,labels = ax.get_legend_handles_labels()
 
