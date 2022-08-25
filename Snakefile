@@ -45,18 +45,22 @@ rule prepare_sector_networks:
                **config['scenario'])
 
 datafiles = [
-    "eea/UNFCCC_v23.csv",
-    "switzerland-sfoe/switzerland-new_format.csv",
-    "nuts/NUTS_RG_10M_2013_4326_LEVL_2.geojson",
-    "myb1-2017-nitro.xls",
-    "Industrial_Database.csv",
-    "emobility/KFZ__count",
-    "emobility/Pkw__count",
+    "data/eea/UNFCCC_v23.csv",
+    "data/switzerland-sfoe/switzerland-new_format.csv",
+    "data/nuts/NUTS_RG_10M_2013_4326_LEVL_2.geojson",
+    "data/myb1-2017-nitro.xls",
+    "data/Industrial_Database.csv",
+    "data/emobility/KFZ__count",
+    "data/emobility/Pkw__count",
+    "data/h2_salt_caverns_GWh_per_sqkm.geojson",
+    directory("data/eurostat-energy_balances-june_2016_edition"),
+    directory("data/eurostat-energy_balances-may_2018_edition"),
+    directory("data/jrc-idees-2015"),
 ]
 
 if config.get('retrieve_sector_databundle', True):
     rule retrieve_sector_databundle:
-        output:  expand('data/{file}', file=datafiles)
+        output: *datafiles
         log: "logs/retrieve_sector_databundle.log"
         script: 'scripts/retrieve_sector_databundle.py'
 
@@ -427,15 +431,47 @@ else:
     build_retro_cost_output = {}
 
 
+rule build_population_weighted_energy_totals:
+    input:
+        energy_totals='resources/energy_totals.csv',
+        clustered_pop_layout="resources/pop_layout_elec_s{simpl}_{clusters}.csv"
+    output: "resources/pop_weighted_energy_totals_s{simpl}_{clusters}.csv"
+    threads: 1
+    resources: mem_mb=2000
+    script: "scripts/build_population_weighted_energy_totals.py"
+
+
+rule build_transport_demand:
+    input:
+        clustered_pop_layout="resources/pop_layout_elec_s{simpl}_{clusters}.csv",
+        pop_weighted_energy_totals="resources/pop_weighted_energy_totals_s{simpl}_{clusters}.csv",
+        transport_data='resources/transport_data.csv',
+        traffic_data_KFZ="data/emobility/KFZ__count",
+        traffic_data_Pkw="data/emobility/Pkw__count",
+        temp_air_total="resources/temp_air_total_elec_s{simpl}_{clusters}.nc",
+    output:
+        transport_demand="resources/transport_demand_s{simpl}_{clusters}.csv",
+        transport_data="resources/transport_data_s{simpl}_{clusters}.csv",
+        avail_profile="resources/avail_profile_s{simpl}_{clusters}.csv",
+        dsm_profile="resources/dsm_profile_s{simpl}_{clusters}.csv"
+    threads: 1
+    resources: mem_mb=2000
+    script: "scripts/build_transport_demand.py"
+
+
 rule prepare_sector_network:
     input:
         overrides="data/override_component_attrs",
         network=pypsaeur('networks/elec_s{simpl}_{clusters}_ec_lv{lv}_{opts}.nc'),
         energy_totals_name='resources/energy_totals.csv',
+        eurostat=input_eurostat,
+        pop_weighted_energy_totals="resources/pop_weighted_energy_totals_s{simpl}_{clusters}.csv",
+        transport_demand="resources/transport_demand_s{simpl}_{clusters}.csv",
+        transport_data="resources/transport_data_s{simpl}_{clusters}.csv",
+        avail_profile="resources/avail_profile_s{simpl}_{clusters}.csv",
+        dsm_profile="resources/dsm_profile_s{simpl}_{clusters}.csv",
         co2_totals_name='resources/co2_totals.csv',
-        transport_name='resources/transport_data.csv',
-        traffic_data_KFZ="data/emobility/KFZ__count",
-        traffic_data_Pkw="data/emobility/Pkw__count",
+        co2="data/eea/UNFCCC_v23.csv",
         biomass_potentials='resources/biomass_potentials_s{simpl}_{clusters}.csv',
         heat_profile="data/heat_load_profile_BDEW.csv",
         costs=CDIR + "costs_{planning_horizons}.csv",
@@ -534,7 +570,9 @@ rule plot_summary:
     input:
         costs=SDIR + '/csvs/costs.csv',
         energy=SDIR + '/csvs/energy.csv',
-        balances=SDIR + '/csvs/supply_energy.csv'
+        balances=SDIR + '/csvs/supply_energy.csv',
+        eurostat=input_eurostat,
+        country_codes='data/Country_codes.csv',
     output:
         costs=SDIR + '/graphs/costs.pdf',
         energy=SDIR + '/graphs/energy.pdf',

@@ -1,6 +1,9 @@
 import os
+import yaml
+import pytz
 import pandas as pd
 from pathlib import Path
+from snakemake.utils import update_config
 from pypsa.descriptors import Dict
 from pypsa.components import components, component_attrs
 
@@ -57,6 +60,7 @@ def mock_snakemake(rulename, **wildcards):
     import os
     from pypsa.descriptors import Dict
     from snakemake.script import Snakemake
+    from packaging.version import Version, parse
 
     script_dir = Path(__file__).parent.resolve()
     assert Path.cwd().resolve() == script_dir, \
@@ -66,7 +70,8 @@ def mock_snakemake(rulename, **wildcards):
         if os.path.exists(p):
             snakefile = p
             break
-    workflow = sm.Workflow(snakefile, overwrite_configfiles=[])
+    kwargs = dict(rerun_triggers=[]) if parse(sm.__version__) > Version("7.7.0") else {}
+    workflow = sm.Workflow(snakefile, overwrite_configfiles=[], **kwargs)
     workflow.include(snakefile)
     workflow.global_resources = {}
     rule = workflow.get_rule(rulename)
@@ -101,3 +106,38 @@ def progress_retrieve(url, file):
         pbar.update( int(count * blockSize * 100 / totalSize) )
 
     urllib.request.urlretrieve(url, file, reporthook=dlProgress)
+
+
+def generate_periodic_profiles(dt_index, nodes, weekly_profile, localize=None):
+    """
+    Give a 24*7 long list of weekly hourly profiles, generate this for each
+    country for the period dt_index, taking account of time zones and summer time.
+    """
+
+    weekly_profile = pd.Series(weekly_profile, range(24*7))
+
+    week_df = pd.DataFrame(index=dt_index, columns=nodes)
+
+    for node in nodes:
+        timezone = pytz.timezone(pytz.country_timezones[node[:2]][0])
+        tz_dt_index = dt_index.tz_convert(timezone)
+        week_df[node] = [24 * dt.weekday() + dt.hour for dt in tz_dt_index]
+        week_df[node] = week_df[node].map(weekly_profile)
+
+    week_df = week_df.tz_localize(localize)
+
+    return week_df
+
+
+def parse(l):
+    if len(l) == 1:
+        return yaml.safe_load(l[0])
+    else:
+        return {l.pop(0): parse(l)}
+
+
+def update_config_with_sector_opts(config, sector_opts):
+    for o in sector_opts.split("-"):
+        if o.startswith("CF:"):
+            l = o.split("+")[1:]
+            update_config(config, parse(l))
